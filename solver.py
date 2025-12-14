@@ -134,6 +134,38 @@ def intensity_factor_for_hlm(workout_slot: int) -> float:
     return pattern[workout_slot % 3]
 
 
+def reduce_candidates(
+    df: pd.DataFrame,
+    *,
+    max_total: int = 800,
+    max_per_bodypart: int = 80,
+    rating_col: str = "Rating",
+    body_col: str = "BodyPart",
+) -> pd.DataFrame:
+    """
+    Reduce number of candidate exercises to keep the optimization model small enough
+    for size-limited Gurobi licenses (like Streamlit Cloud).
+    """
+    df = df.copy()
+
+    # Ensure Rating exists
+    if rating_col in df.columns:
+        df[rating_col] = pd.to_numeric(df[rating_col], errors="coerce").fillna(df[rating_col].median())
+    else:
+        df[rating_col] = 0.0
+
+    # Sort best first
+    df = df.sort_values(by=rating_col, ascending=False)
+
+    # Cap per body part (prevents 1 category from exploding model size)
+    if body_col in df.columns:
+        df = df.groupby(body_col, group_keys=False).head(max_per_bodypart)
+
+    # Cap overall
+    df = df.head(max_total)
+
+    return df
+
 def solve_week_plan(
     csv_path: str,
     user_level: str,
@@ -232,6 +264,15 @@ def solve_week_plan(
 
     if data.empty:
         raise ValueError("No exercises match your filters (goal/level/equipment). Try relaxing filters.")
+    
+    data = reduce_candidates(
+        data,
+        max_total=120,
+        max_per_bodypart=20,
+        rating_col="Rating",
+        body_col="BodyPart",
+    )
+
 
     data = data.reset_index(drop=True)
     data["TimeMin"] = data.apply(estimate_time, axis=1)
