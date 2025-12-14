@@ -1,5 +1,10 @@
 import streamlit as st
 import pandas as pd
+import os
+
+os.environ["GRB_WLSACCESSID"] = st.secrets["GRB_WLSACCESSID"]
+os.environ["GRB_WLSSECRET"]   = st.secrets["GRB_WLSSECRET"]
+os.environ["GRB_LICENSEID"]   = st.secrets["GRB_LICENSEID"]
 
 from solver import (
     solve_week_plan,
