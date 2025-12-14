@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
 import os
+import traceback
+from pathlib import Path
 
+-
 os.environ["GRB_WLSACCESSID"] = st.secrets["GRB_WLSACCESSID"]
 os.environ["GRB_WLSSECRET"]   = st.secrets["GRB_WLSSECRET"]
 os.environ["GRB_LICENSEID"]   = st.secrets["GRB_LICENSEID"]
@@ -13,7 +16,11 @@ from solver import (
     NO_EQUIP_OPTION
 )
 
-CSV_PATH = "megaGymDataset.csv"
+# ✅ Turn this on while debugging Streamlit Cloud
+DEBUG = True
+
+# ✅ Robust dataset path (works locally + on Streamlit Cloud)
+CSV_PATH = str(Path(__file__).resolve().parent / "megaGymDataset.csv")
 
 st.set_page_config(page_title="Workout Optimizer", layout="wide")
 
@@ -50,6 +57,12 @@ def effective_equipment_filter(user_equipment_selection: list[str] | None):
         return [NO_EQUIP_OPTION]
     return user_equipment_selection
 
+
+# ✅ Fail-fast: if dataset missing on Cloud, show folder contents
+if not Path(CSV_PATH).exists():
+    st.error(f"Dataset file not found at: {CSV_PATH}")
+    st.write("Files in app folder:", [p.name for p in Path(__file__).resolve().parent.iterdir()])
+    st.stop()
 
 df_all = load_dataset(CSV_PATH)
 
@@ -118,10 +131,7 @@ with st.sidebar:
             (~df_all["BodyPart"].isna())
         ].copy()
 
-        # Apply the same equipment logic to muscle availability:
-        # - None => no restriction
-        # - No Equip => Body Only only
-        # - Some equip => those equip + Body Only
+        # Apply equipment restriction for Custom muscle list (UI only)
         if allowed_equipment is not None:
             if NO_EQUIP_OPTION in allowed_equipment:
                 df_strength = df_strength[df_strength["Equipment"] == "Body Only"].copy()
@@ -172,6 +182,21 @@ if generate:
                 allow_repeat_exercises=allow_repeat_exercises,
             )
 
+        # ✅ SANITY CHECK: if solver ignores equipment, we catch it here
+        if allowed_equipment is not None and isinstance(df_plan, pd.DataFrame) and "Equipment" in df_plan.columns:
+            if NO_EQUIP_OPTION in allowed_equipment:
+                allowed_set = {"Body Only"}
+            else:
+                allowed_set = set(allowed_equipment) | {"Body Only"}
+
+            used = set(df_plan["Equipment"].dropna().astype(str).str.strip().unique())
+            bad = used - allowed_set
+            if bad:
+                st.error(f"BUG: solver returned exercises using disallowed equipment: {sorted(bad)}")
+                st.write("Allowed:", sorted(allowed_set))
+                st.write("Used:", sorted(used))
+                st.stop()
+
         st.success("Plan generated")
 
         c1, c2, c3 = st.columns(3)
@@ -193,9 +218,14 @@ if generate:
             use_container_width=True
         )
 
-    except Exception:
-        # No traceback shown; just a clean user-facing message.
+    except Exception as e:
         st.error("No feasible plan found with these settings. Try increasing minutes, selecting more workout days, relaxing the template, or widening equipment options.")
+
+        # ✅ Debug: show the REAL reason on Cloud (missing file, solver crash, infeasible, etc.)
+        if DEBUG:
+            st.exception(e)
+            st.code(traceback.format_exc())
+
         st.stop()
 else:
     st.info("Choose your inputs on the left, then click Generate plan")
